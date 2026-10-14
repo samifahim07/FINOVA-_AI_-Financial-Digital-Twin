@@ -1,0 +1,4 @@
+user_id,scenario,horizon_months,currency,initial_cash,final_cash,cash_change,final_loan_balance,goal_progress_pct,final_net_worth,final_risk_level
+U0001,baseline,12,BDT,704870.0,690986.0,-13884.0,282117.69,2.96,1112554.31,MODERATE
+U0001,save_more,12,BDT,704870.0,834075.2,129205.19999999995,282117.69,11.18,1255643.51,MODERATE
+U0001,spend_more,12,BDT,704870.0,476352.2,-228517.8,282117.69,0.0,897920.51,MODERATE
