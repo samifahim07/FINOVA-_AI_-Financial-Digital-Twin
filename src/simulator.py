@@ -8,6 +8,7 @@ import pandas as pd
 # ==========================================
 # FINOVA AI - FINANCIAL DIGITAL TWIN
 # DYNAMIC FINANCIAL SIMULATION ENGINE
+# CORRECTED VERSION 2.0
 # ==========================================
 
 BASE = Path(__file__).resolve().parent.parent
@@ -21,15 +22,29 @@ OUTPUT_DIR = BASE / "reports" / "simulations"
 SCENARIOS = {
     "baseline": 1.00,
     "save_more": 0.90,
-    "spend_more": 1.15
+    "spend_more": 1.15,
 }
 
 
 # ==========================================
-# 1. SIMULATE A FINANCIAL PROFILE
+# 1. FINANCIAL SIMULATION ENGINE
 # ==========================================
 
 def simulate_profile(profile, months, living_multiplier):
+
+    if not 1 <= months <= 120:
+        raise ValueError(
+            "months must be between 1 and 120"
+        )
+
+    if living_multiplier < 0:
+        raise ValueError(
+            "living_multiplier must not be negative"
+        )
+
+    # ======================================
+    # INITIAL FINANCIAL STATE
+    # ======================================
 
     income = float(profile["monthly_income"])
     living = float(profile["living_expense"])
@@ -44,38 +59,92 @@ def simulate_profile(profile, months, living_multiplier):
 
     loan_balance = float(profile["total_debt"])
 
-    other_assets = (
-        float(profile["total_assets"])
-        - float(profile["current_balance"])
-    )
-
     cash = float(profile["current_balance"])
     emergency = float(profile["emergency_fund"])
     goal_saved = float(profile["goal_saved_so_far"])
 
-    # Cash not earmarked for either goal or emergency
-    unassigned = cash - emergency - goal_saved
-
     goal_target = float(profile["target_amount"])
     goal_deadline = int(profile["target_months"])
 
-    # Input safety checks
+    other_assets = (
+        float(profile["total_assets"]) - cash
+    )
+
+    # ======================================
+    # EMERGENCY FUND DOUBLE-COUNTING FIX
+    # ======================================
+
+    is_emergency_goal = (
+        str(profile["financial_goal"]) == "Emergency Fund"
+    )
+
+    # Emergency goal savings are already
+    # included in the emergency fund.
+
+    unassigned = cash - emergency - (
+        0.0 if is_emergency_goal else goal_saved
+    )
+
+    # ======================================
+    # INITIAL DATA VALIDATION
+    # ======================================
+
     if income <= 0 or goal_target <= 0 or goal_deadline <= 0:
-        raise ValueError("Invalid income or goal values")
+        raise ValueError(
+            "Invalid income or goal settings"
+        )
+
+    if (
+        annual_loan_rate < 0
+        or living < 0
+        or standard_loan_payment < 0
+    ):
+        raise ValueError(
+            "Invalid expense or loan values"
+        )
 
     components = [
-        cash, emergency, goal_saved,
-        unassigned, loan_balance, other_assets
+        cash,
+        emergency,
+        goal_saved,
+        loan_balance,
+        other_assets,
     ]
 
     if min(components) < -0.01:
-        raise ValueError("Invalid initial financial components")
+        raise ValueError(
+            "Invalid initial financial components"
+        )
+
+    if unassigned < -0.01:
+        raise ValueError(
+            "Initial cash buckets exceed available cash"
+        )
+
+    if emergency > cash + 0.01:
+        raise ValueError(
+            "Emergency fund exceeds available cash"
+        )
 
     if goal_saved > goal_target + 0.01:
-        raise ValueError("Goal savings exceed goal target")
+        raise ValueError(
+            "Goal savings exceed target"
+        )
+
+    if (
+        is_emergency_goal
+        and goal_saved > emergency + 0.01
+    ):
+        raise ValueError(
+            "Emergency goal savings exceed emergency reserves"
+        )
 
     if loan_balance > 0 and standard_loan_payment <= 0:
-        raise ValueError("Outstanding debt without loan payment")
+        raise ValueError(
+            "Outstanding debt without loan payment"
+        )
+
+    unassigned = max(0.0, unassigned)
 
     timeline = []
 
@@ -85,14 +154,21 @@ def simulate_profile(profile, months, living_multiplier):
 
     for month in range(1, months + 1):
 
-        # Loan amortization
-        interest = loan_balance * annual_loan_rate / 12
+        # ==================================
+        # LOAN AMORTIZATION
+        # ==================================
+
+        interest = (
+            loan_balance * annual_loan_rate / 12
+        )
 
         if loan_balance > 0:
+
             payment = min(
                 standard_loan_payment,
                 loan_balance + interest
             )
+
         else:
             payment = 0.0
 
@@ -101,7 +177,10 @@ def simulate_profile(profile, months, living_multiplier):
             loan_balance + interest - payment
         )
 
-        # Apply selected scenario
+        # ==================================
+        # MONTHLY CASH FLOW
+        # ==================================
+
         living_cost = round(
             living * living_multiplier, 2
         )
@@ -110,74 +189,117 @@ def simulate_profile(profile, months, living_multiplier):
 
         monthly_cash_flow = income - total_expense
 
-        # Update projected cash
         cash += monthly_cash_flow
 
         # ==================================
-        # 3. MANAGE CASH RESERVES
+        # 3. CASH RESERVE MANAGEMENT
         # ==================================
 
         if monthly_cash_flow < 0:
 
             shortage = -monthly_cash_flow
 
-            # Use unassigned cash first
+            # First use unassigned cash
             taken = min(unassigned, shortage)
+
             unassigned -= taken
             shortage -= taken
 
-            # Then use goal savings
-            taken = min(goal_saved, shortage)
-            goal_saved -= taken
-            shortage -= taken
+            # Then use separate goal savings
+            # Emergency goals share emergency reserves
+
+            if not is_emergency_goal:
+
+                taken = min(goal_saved, shortage)
+
+                goal_saved -= taken
+                shortage -= taken
 
             # Finally draw emergency reserves
             taken = min(emergency, shortage)
+
             emergency -= taken
             shortage -= taken
 
+            # Synchronize emergency goal progress
+
+            if is_emergency_goal:
+
+                goal_saved = min(
+                    goal_target,
+                    emergency
+                )
+
+            # Remaining shortage becomes
+            # an unfunded cash gap.
+
         else:
 
-            # Clear negative cash positions before
-            # allocating new money
+            # First clear any negative cash position
+
             available = min(
                 monthly_cash_flow,
                 max(0.0, cash)
             )
 
-            # First restore emergency coverage
-            emergency_target = 3 * total_expense
+            # ==================================
+            # RESTORE EMERGENCY FUND
+            # ==================================
+
+            emergency_target = max(
+                3 * total_expense,
+                goal_target if is_emergency_goal else 0.0
+            )
 
             top_up = min(
                 available,
-                max(0.0, emergency_target - emergency)
+                max(
+                    0.0,
+                    emergency_target - emergency
+                )
             )
 
             emergency += top_up
             available -= top_up
 
-            # Then contribute toward financial goal
-            months_to_deadline = (
-                goal_deadline - month + 1
-            )
+            # ==================================
+            # FINANCIAL GOAL ALLOCATION
+            # ==================================
 
-            if months_to_deadline > 0:
+            if is_emergency_goal:
 
-                goal_monthly_need = (
-                    max(0.0, goal_target - goal_saved)
-                    / months_to_deadline
+                goal_saved = min(
+                    goal_target,
+                    emergency
                 )
 
-                goal_add = min(
-                    available,
-                    max(0.0, goal_target - goal_saved),
-                    goal_monthly_need
+            else:
+
+                months_to_deadline = (
+                    goal_deadline - month + 1
                 )
 
-                goal_saved += goal_add
-                available -= goal_add
+                if months_to_deadline > 0:
 
-            # Remaining surplus stays unassigned
+                    remaining_goal = max(
+                        0.0,
+                        goal_target - goal_saved
+                    )
+
+                    needed_per_month = (
+                        remaining_goal / months_to_deadline
+                    )
+
+                    goal_add = min(
+                        available,
+                        remaining_goal,
+                        needed_per_month
+                    )
+
+                    goal_saved += goal_add
+                    available -= goal_add
+
+            # Remaining money stays unassigned
             unassigned += available
 
         # ==================================
@@ -185,18 +307,42 @@ def simulate_profile(profile, months, living_multiplier):
         # ==================================
 
         allocated_cash = (
-            unassigned + emergency + goal_saved
+            unassigned
+            + emergency
+            + (
+                0.0
+                if is_emergency_goal
+                else goal_saved
+            )
         )
 
         if abs(
             allocated_cash - max(0.0, cash)
         ) > 0.02:
+
             raise AssertionError(
-                "Cash bucket accounting is inconsistent"
+                f"Cash bucket accounting inconsistent "
+                f"at month {month}: "
+                f"cash={cash:.2f}, "
+                f"allocated={allocated_cash:.2f}"
             )
 
-        # Negative cash is a funding shortfall,
-        # not an automatically approved overdraft
+        if min(
+            unassigned,
+            emergency,
+            goal_saved,
+            loan_balance
+        ) < -0.01:
+
+            raise AssertionError(
+                f"Negative financial component "
+                f"at month {month}"
+            )
+
+        # ==================================
+        # 5. PROJECTED NET WORTH
+        # ==================================
+
         projected_assets = (
             other_assets + max(0.0, cash)
         )
@@ -211,19 +357,22 @@ def simulate_profile(profile, months, living_multiplier):
 
         emergency_coverage = (
             emergency / total_expense
-            if total_expense > 0 else 0
+            if total_expense > 0
+            else 0.0
         )
 
         # ==================================
-        # 5. FINANCIAL GOAL MONITORING
+        # 6. FINANCIAL GOAL MONITORING
         # ==================================
 
         remaining_goal = max(
-            0.0, goal_target - goal_saved
+            0.0,
+            goal_target - goal_saved
         )
 
         months_remaining = max(
-            0, goal_deadline - month
+            0,
+            goal_deadline - month
         )
 
         if months_remaining > 0:
@@ -238,14 +387,17 @@ def simulate_profile(profile, months, living_multiplier):
             )
 
         else:
-            goal_funding_gap = remaining_goal > 0.01
+
+            goal_funding_gap = (
+                remaining_goal > 0.01
+            )
 
         goal_progress = (
             goal_saved / goal_target * 100
         )
 
         # ==================================
-        # 6. DYNAMIC RISK ASSESSMENT
+        # 7. FINANCIAL RISK ASSESSMENT
         # ==================================
 
         risk_flags = {
@@ -268,53 +420,82 @@ def simulate_profile(profile, months, living_multiplier):
         risk_count = sum(risk_flags.values())
 
         if risk_count >= 3:
+
             risk_level = "HIGH"
+
         elif risk_count >= 1:
+
             risk_level = "MODERATE"
+
         else:
+
             risk_level = "LOW"
 
         # ==================================
-        # 7. MONTHLY SNAPSHOT
+        # 8. MONTHLY FINANCIAL SNAPSHOT
         # ==================================
 
         timeline.append({
+
             "month": month,
+
             "income": round(income, 2),
-            "living_expense": round(living_cost, 2),
-            "loan_payment": round(payment, 2),
-            "loan_interest": round(interest, 2),
+
+            "living_expense": round(
+                living_cost, 2
+            ),
+
+            "loan_payment": round(
+                payment, 2
+            ),
+
+            "loan_interest": round(
+                interest, 2
+            ),
+
             "monthly_cash_flow": round(
                 monthly_cash_flow, 2
             ),
+
             "projected_cash_position": round(
                 cash, 2
             ),
+
             "unfunded_cash_gap": round(
                 max(0.0, -cash), 2
             ),
+
             "loan_balance": round(
                 loan_balance, 2
             ),
+
             "emergency_fund": round(
                 emergency, 2
             ),
+
             "goal_saved_so_far": round(
                 goal_saved, 2
             ),
+
             "goal_progress_pct": round(
                 goal_progress, 2
             ),
-            "net_worth": round(net_worth, 2),
+
+            "net_worth": round(
+                net_worth, 2
+            ),
+
             "risk_level": risk_level,
+
             "risk_flags": risk_flags
+
         })
 
     return timeline
 
 
 # ==========================================
-# 8. EXECUTE SCENARIOS
+# 9. RUN FINANCIAL SCENARIOS
 # ==========================================
 
 def main():
@@ -338,11 +519,21 @@ def main():
     args = parser.parse_args()
 
     if not 1 <= args.months <= 120:
+
         parser.error(
             "--months must be between 1 and 120"
         )
 
-    # Load profile
+    if not DATA_PATH.exists():
+
+        parser.error(
+            f"Missing dataset: {DATA_PATH}"
+        )
+
+    # ======================================
+    # LOAD USER PROFILE
+    # ======================================
+
     df = pd.read_csv(DATA_PATH)
 
     selected = df.loc[
@@ -350,6 +541,7 @@ def main():
     ]
 
     if selected.empty:
+
         parser.error(
             f"Unknown user ID: {args.user_id}"
         )
@@ -364,7 +556,10 @@ def main():
         f"{args.months}-Month Simulation"
     )
 
-    # Run independent scenarios
+    # ======================================
+    # EXECUTE THREE SCENARIOS
+    # ======================================
+
     for name, multiplier in SCENARIOS.items():
 
         history = simulate_profile(
@@ -375,18 +570,23 @@ def main():
 
         scenario_results[name] = history
 
-        # Flat structure for CSV output
+        # Convert timeline to flat CSV structure
+
         for record in history:
 
             flat_record = {
                 "scenario": name,
+
                 **{
-                    k: v for k, v in record.items()
+                    k: v
+                    for k, v in record.items()
                     if k != "risk_flags"
                 },
+
                 **{
                     f"risk_{k}": v
-                    for k, v in record["risk_flags"].items()
+                    for k, v
+                    in record["risk_flags"].items()
                 }
             }
 
@@ -403,7 +603,7 @@ def main():
         )
 
     # ======================================
-    # 9. SAVE SIMULATION OUTPUT
+    # 10. SAVE SIMULATION OUTPUT
     # ======================================
 
     OUTPUT_DIR.mkdir(
@@ -420,21 +620,39 @@ def main():
 
     pd.DataFrame(
         all_scenarios
-    ).to_csv(csv_path, index=False)
+    ).to_csv(
+        csv_path,
+        index=False
+    )
+
+    # ======================================
+    # SAVE JSON REPORT
+    # ======================================
 
     payload = {
+
         "user_id": args.user_id,
+
         "currency": str(profile["currency"]),
+
         "horizon_months": args.months,
 
         "assumptions": {
+
             "model": "rule_based_synthetic_simulation",
+
             "income_growth": 0,
+
             "inflation": 0,
+
             "investment_returns": 0,
+
             "living_expense_multipliers": SCENARIOS,
+
             "loan_model": "monthly_amortization",
+
             "emergency_fund_priority": True,
+
             "negative_cash_position":
                 "unfunded_gap_not_bank_overdraft"
         },
@@ -447,6 +665,7 @@ def main():
         "w",
         encoding="utf-8"
     ) as f:
+
         json.dump(
             payload,
             f,
@@ -455,9 +674,15 @@ def main():
         )
 
     print("\nSimulation Completed!")
+
     print("CSV:", csv_path)
     print("JSON:", json_path)
 
 
+# ==========================================
+# MAIN EXECUTION
+# ==========================================
+
 if __name__ == "__main__":
+
     main()
