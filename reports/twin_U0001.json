@@ -1,0 +1,50 @@
+{
+    "user_id": "U0001",
+    "persona": "family_household",
+    "currency": "BDT",
+    "financial_state": {
+        "monthly_income": 132000.0,
+        "monthly_expense": 133157.0,
+        "monthly_cash_flow": -1157.0,
+        "current_balance": 704870.0,
+        "emergency_fund": 476994.0,
+        "total_assets": 1408556.0,
+        "total_debt": 391632.0,
+        "net_worth": 1016924.0
+    },
+    "financial_ratios": {
+        "savings_rate_pct": -0.88,
+        "expense_ratio_pct": 100.88,
+        "debt_service_ratio_pct": 10.54,
+        "emergency_coverage_months": 3.58,
+        "debt_to_asset_ratio_pct": 27.8
+    },
+    "financial_goal": {
+        "goal": "Start Business",
+        "target_amount": 1571000.0,
+        "saved_so_far": 46473.0,
+        "remaining_amount": 1524527.0,
+        "target_months": 24,
+        "required_monthly_savings": 63521.96,
+        "goal_progress_pct": 2.96,
+        "feasible_from_current_surplus": false
+    },
+    "risk_assessment": {
+        "risk_level": "MODERATE",
+        "total_risk_flags": 2,
+        "risk_flags": {
+            "negative_cash_flow": true,
+            "low_emergency_fund": false,
+            "high_debt_burden": false,
+            "negative_net_worth": false,
+            "goal_funding_gap": true
+        },
+        "cash_runway_months": 609.22
+    },
+    "metadata": {
+        "engine_version": "1.0",
+        "profile_source": "synthetic_v2",
+        "risk_method": "rule_based_heuristics",
+        "snapshot_type": "synthetic_demo"
+    }
+}
