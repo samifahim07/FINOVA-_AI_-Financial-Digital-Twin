@@ -1,0 +1,12 @@
+metric,value
+total_users,500.0
+average_income,102472.0
+average_expense,80931.006
+average_cash_flow,21540.994
+median_savings_rate_pct,21.135820512820512
+median_emergency_months,2.062314991183147
+negative_cash_flow_users,68.0
+low_emergency_fund_users,338.0
+high_debt_burden_users,0.0
+negative_net_worth_users,7.0
+goal_unaffordable_users,276.0
